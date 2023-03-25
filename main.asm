@@ -14,15 +14,16 @@
                 push 0xFEDE
                 push 0xBADDED
 
-                call print_format_line
+                call my_printf
 
                 mov rax, 0x3C
                 xor rdi, rdi
                 syscall
 
 section .data
+; %d %s %x %%%c %b, -1, "love", 0xEDA, '!', 127
 
-line: db "My line", 0xA, "%d %s %s %x %x %x %x", 0xA, 0
+line: db "My line", 0xA, "%d %s %s %o %x %x %x", 0xA, 0
 line_to_printf: db "Printfed line", 0xA, 0
 line_to_printf2: db "Second line", 0
 line_to_printf3: db "Third line", 0xA, 0
