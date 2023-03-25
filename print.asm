@@ -1,5 +1,8 @@
 section .text
 
+global my_printf
+; call standard printf()
+
 ;----------------------------------------------------------------------------------------------------------------------------------------
 ;       Print nullterminated line in terminal using syscall. Uses get_line_len to count length of the line.
 ;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -14,7 +17,7 @@ print_null_term_line:
                 call get_line_len                       ; calculate length of the line
 
                 mov rdx, rax                            ; write length for syscall
-                mov rax, 0x01                           ; use write funtion
+                mov rax, 0x01                           ; use write function
                 mov rdi, 1
                 syscall
 
@@ -39,7 +42,7 @@ get_line_len:
 .count_char:
                 inc rdi
                 inc rax
-                cmp byte [rsi + rdi], 0                 ; check line_terminator
+                cmp byte [rsi + rdi], 0                 ; check line terminator
                 jne .count_char
 
                 ret
@@ -83,13 +86,16 @@ print_n_symbs:
 ;
 ;-----------------------------------------------------------------------------------------------------------------------------------------
 
-print_format_line:
+my_printf:
                 xor r14, r14
-                mov r15, rdx            ; save rdx
-                mov r12, rcx            ; save rcx
+                mov r15, rdx                    ; save rdx
+                mov r12, rcx                    ; save rcx
 .print_symb:
                 cmp byte [rdi], '%'             ; check %
                 jne .next_symb
+
+                cmp byte [rdi + 1], '%'
+                je .percent
 
                 call push_next_printf_arg       ; put next argument to printf in stack
                 inc r14                         ; increases argument counter
@@ -98,12 +104,14 @@ print_format_line:
                 add rsp, 8                      ; delete argument from push_next_printf_arg
 
                 jmp .print_symb
+.percent:
+                inc rdi
 .next_symb:
-                push rsi                        ;\
+                push rsi                        ;/
                 push rdx                        ;       save registers
                 push rdi                        ;/
                 call print_char
-                pop rdi                         ;\
+                pop rdi                         ;/
                 pop rdx                         ;       restore registers
                 pop rsi                         ;/
 
@@ -115,7 +123,7 @@ print_format_line:
                 ret
 
 ;------------------------------------------------------------------------------------------------------------------------------------------
-;       Print argument. Uses switch to choose format function.
+;       Print argument. Uses jump table to choose format function.
 ;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ;       Entry:          rdi - pointer on the line
 ;       Destroys:       rdi
@@ -126,13 +134,20 @@ print_format_line:
 
 printf_arg:
                 inc rdi
+
+                cmp byte [rdi], 'b'
+                jb .error
+
                 cmp byte [rdi], 'x'
                 ja .error
 
-                xor rax, rax                                    ;\
-                mov al, byte [rdi]                              ;       2 identical lines because 1 is not compiling
-                mov al, byte [rdi]                              ;       calculate place in jump table
-                sub al, 'b'                                     ;/
+                xor rax, rax
+                mov al, byte [rdi]
+                sub al, 'b'
+
+                push rsi
+                push rdi
+                push rdx
 
                 mov rax, qword .JMP_TABLE[rax * 8]
                 jmp rax
@@ -164,78 +179,59 @@ printf_arg:
         dq   .error    ; z
 
 .string:
-                mov rsi, qword [rsp + 1 * 8]                    ; get argument
-
-                push rdi
+                mov rsi, qword [rsp + 4 * 8]                    ; get argument
 
                 call print_null_term_line
 
-                pop rdi
                 jmp .break
 .decimal:
-                mov rax, qword [rsp + 1 * 8]                     ; get argument
-
-                push rsi
-                push rdi
-                push rdx
+                mov rax, qword [rsp + 4 * 8]                     ; get argument
 
                 call print_sign_decimal                          ; get argument
 
-                pop rdx
-                pop rdi
-                pop rsi
-
                 jmp .break
 .hex:
-                mov rbx, qword [rsp + 1 * 8]                     ; get argument
-                push rsi
-                push rdi
-                push rdx
+                mov rbx, qword [rsp + 4 * 8]                     ; get argument
 
                 call print_hex
 
-                pop rdx
-                pop rdi
-                pop rsi
-
                 jmp .break
 .char:
-                push qword [rsp + 1 * 8]                        ; get argument
+                push qword [rsp + 4 * 8]                        ; get argument
                 call print_char
                 add rsp, 8
                 jmp .break
 .octal:
-                mov rbx, qword [rsp + 1 * 8]                    ; get argument
-                push rsi
-                push rdi
-                push rdx
+                mov rbx, qword [rsp + 4 * 8]                    ; get argument
 
                 call print_octo
 
-                pop rdx
-                pop rdi
-                pop rsi
                 jmp .break
 .binary:
-                mov r10, qword [rsp + 1 * 8]                    ; get argument
-                push rsi
-                push rdi
+                mov r10, qword [rsp + 4 * 8]                    ; get argument
 
                 call print_binary
 
+                jmp .break
+
+.error:
+                mov rsi, ERROR_LINE
+                push rdi
+                call print_null_term_line                       ; print error line
+                pop rdi
+                jmp .exit
+.break:
+                pop rdx
                 pop rdi
                 pop rsi
-                jmp .break
-.error:
-                push ERROR_LINE
-                call print_null_term_line                       ; print error line
-                add rsp, 8
-.break:
+
+.exit:
                 inc rdi
                 ret
 
 ;------------------------------------------------------------------------------------------------------------------------------------------
-;               Pushes printf argument in stack if it's in registers. If argument is in stack, it will change it's position
+;       Pushes printf argument in stack if it's in registers.
+;               If argument is in stack, it will change it's position
 ;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ;       Entry:          r14 - argument counter
 ;       Destroys:
@@ -283,9 +279,9 @@ push_next_printf_arg:
                 ret
 
 ;------------------------------------------------------------------------------------------------------------------------------------------
-;
+;       Print char in terminal.
 ;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-;       Entry:  Print char in terminal.
+;       Entry:  in stack pointer on line
 ;       Destroys: rsi
 ;                 rdx
 ;                 rdi
@@ -344,13 +340,17 @@ print_binary:
 ;------------------------------------------------------------------------------------------------------------------------------------------
 
 print_hex:
-                mov rax, rbx
-                shl rbx, 4
-                shr rax, 60                     ; get 4 hight bits
+                mov rcx, 16
+                xor rax, rax
+.print_number:
+                mov al, bl
+                shr rbx, 4
 
                 call print_hex_number
                 cmp rbx, 0
-                jne print_hex
+                jne .print_number
+
+                call print_hex_number_buf
 
                 ret
 
@@ -362,22 +362,36 @@ print_hex:
 ;------------------------------------------------------------------------------------------------------------------------------------------
 
 print_hex_number:
+                and al, 0xF
                 add al, '0'             ; UTF-8 offset
                 cmp al, '9'             ; nedd to write A-F?
                 jle .skip_letter
                 add al, 7               ; write letter
 .skip_letter:
-                push rcx
-                mov rcx, rsp
-                sub rcx, 20
+                mov byte [HEX_NUMBER_BUF + rcx], al
+                dec rcx
 
-                mov byte [rsp - 20], al         ; add char to print before stack
-                push rcx                        ; rcx - pointer on the char to print
+                ret
 
-                call print_char
+;------------------------------------------------------------------------------------------------------------------------------------------
+;       Print hexadecimal number in buffer
+;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+;       Entry:  rcx
+;       Destroys:
+;------------------------------------------------------------------------------------------------------------------------------------------
 
-                add rsp, 8
-                pop rcx
+print_hex_number_buf:
+
+                mov rsi, HEX_NUMBER_BUF                 ; buffer offset
+                add rsi, rcx
+                inc rsi
+
+                mov rdx, 16                             ; calculate length of the line
+                sub rdx, rcx
+
+                mov rax, 0x01
+                mov rdi, 1
+                syscall
 
                 ret
 
@@ -432,7 +446,9 @@ print_sign_decimal:
 print_unsign_decimal:
 
                 mov rdi, 10             ; base of notation
-                xor rcx, rcx
+                ; xor rcx, rcx
+                mov rcx, 20
+
 .next_number:
                 xor rdx, rdx
 
@@ -441,7 +457,7 @@ print_unsign_decimal:
                 add dl, '0'
 
                 mov byte [DECIMAL_NUMBER_BUF + rcx], dl         ; write number in buffer
-                inc rcx
+                dec rcx
 
                 cmp rax, 0
                 jne .next_number
@@ -459,29 +475,16 @@ print_unsign_decimal:
 
 print_decimal_from_buf:
 
-                dec rcx
                 mov rsi, DECIMAL_NUMBER_BUF             ; buffer offset
-.print_number:
-                push rsi
-                push rax
-                push rdi
-                push rcx
-
                 add rsi, rcx
-                push rsi
+                inc rsi
 
-                call print_char
-                add rsp, 8
+                mov rdx, 20                             ; calculate length of the line
+                sub rdx, rcx
 
-                pop rcx
-                pop rdi
-                pop rax
-                pop rsi
-
-                dec rcx
-
-                cmp rcx, 0
-                jnl .print_number
+                mov rax, 0x01
+                mov rdi, 1
+                syscall
 
                 ret
 
@@ -495,42 +498,49 @@ print_decimal_from_buf:
 ;------------------------------------------------------------------------------------------------------------------------------------------
 
 print_octo:
-                mov rax, rbx
-                shl rbx, 3
-                shr rax, 61                         ; get 3 hight bits
+                mov rcx, 24
+.print_number:
+                mov al, bl
+                shr rbx, 3
 
-                call print_octo_digit
+                and al, 7
+                add al, '0'
+                mov byte [OCTO_NUMBER_BUF + rcx], al
+                dec rcx
 
                 cmp rbx, 0
-                jne print_octo
+                jne .print_number
+
+                call print_octo_number_buf
 
                 ret
 
 ;------------------------------------------------------------------------------------------------------------------------------------------
-;       Print octal digit.
+;       Print octodecimal number in buffer
 ;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-;       Entry:  al - number to print
+;       Entry:  rcx
 ;       Destroys:
 ;------------------------------------------------------------------------------------------------------------------------------------------
 
-print_octo_digit:
-                add al, '0'
+print_octo_number_buf:
 
-                push rcx
-                mov rcx, rsp
-                sub rcx, 20
+                mov rsi, OCTO_NUMBER_BUF                ; buffer offset
+                add rsi, rcx
+                inc rsi
 
-                mov byte [rsp - 20], al         ; write char before stack
-                push rcx
+                mov rdx, 24                             ; calculate length of the line
+                sub rdx, rcx
 
-                call print_char
-
-                add rsp, 8
-                pop rcx
+                mov rax, 0x01
+                mov rdi, 1
+                syscall
 
                 ret
 
 section .data
 
 ERROR_LINE: db "!Unknown specificator!", 0xA, 0
+HEX_NUMBER_BUF:     db "________________"
 DECIMAL_NUMBER_BUF: db "____________________"
+OCTO_NUMBER_BUF:    db "________________________"
+BINARY_NUMBER_BUF:  db  "________________________________________________________________"
