@@ -1,8 +1,10 @@
- %include "print.asm"
+;  %include "print.asm"
 
- section .text
+section .text
 
- global _start
+global _start
+
+extern printf
 
  _start:
                 mov rdi, line
@@ -14,7 +16,7 @@
                 push 0xFEDE
                 push 0xBADDED
 
-                call my_printf
+                call printf
 
                 mov rax, 0x3C
                 xor rdi, rdi
